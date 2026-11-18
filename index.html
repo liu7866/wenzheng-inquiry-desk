@@ -39,9 +39,19 @@ const cases={low:'PK-08，请报 50 件的价格，多久到货？',multi:'Pleas
 function analyze(input){
  let normalized=input.normalize('NFKC').replace(/[‐‑–—]/g,'-');
  const skus=[...new Set((normalized.toUpperCase().match(/\b[A-Z]{2,4}-\d{2,5}\b/g)||[]))];
- const found=[...normalized.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(sets?|units?|pcs?|pieces?|套|件|个)(?![A-Za-z])/gi)];
- const ambiguous=/(?:\d[\d,.]*\s*(?:[-/~–—]|to|or|至|到|或)\s*\d[\d,.]*|(?:^|\s)[−-]\d[\d,.]*)\s*(?:sets?|units?|pcs?|pieces?|套|件|个)/i.test(normalized);
- const qty=!ambiguous && found.length===1 && /^(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(found[0][1])?Number(found[0][1].replaceAll(',','')):null;
+ // Capture the complete written number, including grouped thousands; do not read a model suffix as a quantity.
+ const found=[...normalized.matchAll(/(?<![A-Za-z0-9.,+\-−])(\d+(?:(?:[, ]\d+)+)?(?:\.\d+)?)\s*(sets?|units?|pcs?|pieces?|套|件|个)(?![A-Za-z])/gi)];
+ const span=found.length===1?found[0]:null;
+ let qty=null,quantityNote='';
+ if(span){
+   const before=normalized.slice(0,span.index),after=normalized.slice(span.index+span[0].length);
+   const range=/\d[\d,.]*\s*(?:[-/~]|to|or|至|到|或)\s*$/i.test(before);
+   const limit=/(?:\b(?:up to|at most|at least|more than|less than|under|over|about|approx(?:imately)?\.?|around)|最多|至少|至多|不超过|不少于|大约|大概|约|预计|[<>≤≥~])\s*$/i.test(before)||/^\s*(?:以上|以下|左右|上下|起步|以内|or (?:more|less)|and (?:up|above)|\+)/i.test(after);
+   const prior=/(?:previous(?:ly)?|last (?:order|month|year|time)|上次|上月|去年|此前|之前|曾经)/i.test(before.split(/[.!?。！？;；\n]/).at(-1));
+   const written=span[1],valid=/^(?:\d+|\d{1,3}(?:,\d{3})+|\d{1,3}(?: \d{3})+)$/.test(written);
+   if(range||limit||prior){quantityNote=prior?'原文含历史订单数量，需确认本次采购量。':'原文给出范围、近似值或上下限，需确认采购数量后核价。';}
+   else if(valid){const n=Number(written.replace(/[ ,]/g,''));if(Number.isSafeInteger(n)&&n>0)qty=n;}
+ }
  const sku=skus.length===1?skus[0]:null;const prod=catalog[sku];const legalQty=Number.isSafeInteger(qty)&&qty>0;const unit=found.length===1?found[0][2].toLowerCase():'';
  const intents=classify(input), names=new Set(intents.map(x=>x[0]));const facts=[],needs=[],trace=[],en=[];let price=null;
  trace.push('意图识别：'+(intents.map(x=>labelNames[x[0]]).join('、')||'未命中训练语料，转人工阅读')+'。');
@@ -50,15 +60,15 @@ function analyze(input){
  else if(skus.length>1){needs.push('多型号询盘：请分行给出每个型号、数量和单位，分别核价。');en.push('Please send one line per model with its quantity and unit so that we can quote each item separately.');}
  else{needs.push('型号未命中：请买家补充正确货号或参考资料。');en.push('Could you confirm the exact catalog model or share a product reference?');}
  if(legalQty){facts.push('买家原文「'+found[0][0]+'」［询盘原文］');}
- if(prod&&!legalQty){needs.push('需要唯一且有效的采购数量与单位。');en.push('Could you confirm the quantity and unit?');}
+ if(prod&&!legalQty){needs.push(quantityNote||'需要唯一且有效的采购数量与单位。');en.push('Could you confirm the quantity and unit?');}
  if(prod&&legalQty){if(!prod.units.includes(unit)){needs.push('采购单位与目录计价单位不一致，需先核对换算。');en.push('Please confirm the ordering unit; the catalog is priced in '+prod.unit+'.');}
  else if(qty<prod.moq){needs.push('采购量低于起订量，请审核小单方案。');en.push('The requested quantity is below the listed minimum; we will check whether a smaller order is possible.');}
- else if(names.has('price')){price=prod.levels.find(([floor])=>qty>=floor)[1];facts.push('目录阶梯单价 USD '+price.toFixed(2)+' ［'+version+'/'+sku+'/PRICE］');en.push('At '+qty+' '+prod.unit+', the indicative catalog price is USD '+price.toFixed(2)+' per unit, excluding freight and taxes, subject to review.');}}
+ else if(names.has('price')){price=prod.levels.find(([floor])=>qty>=floor)[1];facts.push('目录阶梯单价 USD '+price.toFixed(2)+' ［'+version+'/'+sku+'/PRICE］');en.push('At '+qty+' '+prod.unit+', the indicative catalog price is USD '+price.toFixed(2)+' per '+(prod.unit==='sets'?'set':'unit')+', excluding freight and taxes, subject to review.');}}
  const follow={shipping:['运输目的地、方式及预计交期交物流核实。','We will check shipping terms and timing with logistics.'],docs:['证书或检测报告需由合规人员核对版本和适用型号。','We will verify the requested documentation and its product scope.'],samples:['样品费、可用数与寄送条件需业务确认。','We will check sample availability and terms.'],stock:['库存资料缺失，须核对可发货数量。','We will verify current stock before confirming availability.']};
  for(const [k,r] of Object.entries(follow)){if(names.has(k)){needs.push(r[0]);en.push(r[1]);}}
  if(!intents.length){needs.push('意图置信信息不足，请业务阅读原文后分派。');}
  needs.push('业务复核范围、税费及最终条件后再对外答复。');trace.push('起订量与单位校核：'+(price!==null?'满足阶梯条件并引用价格行。':'未出具阶梯价。'));trace.push('生成双语交接与英文审阅稿；外发由业务人员决定。');
- return {input,skus,qty:legalQty?qty:null,price,intents:intents.map(([k,v])=>({label:labelNames[k],similarity:Number(v.toFixed(3))})),facts,needs,trace,draft:'Hello,\n\n'+en.join(' ')+'\n\nBest regards',catalogVersion:version,model:'local-tfidf-prototype-v2'};
+ return {input,skus,qty:legalQty?qty:null,price,intents:intents.map(([k,v])=>({label:labelNames[k],similarity:Number(v.toFixed(3))})),facts,needs,trace,draft:'Hello,\n\n'+en.join(' ')+'\n\nBest regards',catalogVersion:version,model:'local-tfidf-prototype-v2',quantityReview:quantityNote};
 }
 const $=id=>document.getElementById(id);let result=null;
 function showCatalog(){
