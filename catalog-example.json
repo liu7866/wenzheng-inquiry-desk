@@ -1,0 +1,21 @@
+{
+  "version": "DEMO-B/v2",
+  "products": [
+    {
+      "sku": "WL-20",
+      "name": "reading stand",
+      "moq": 80,
+      "unit": "units",
+      "levels": [
+        [
+          80,
+          6.2
+        ],
+        [
+          300,
+          5.75
+        ]
+      ]
+    }
+  ]
+}

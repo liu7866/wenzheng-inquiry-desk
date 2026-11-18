@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>问证 · 跨境询盘审阅台</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#f1f1e9;color:#173f3b;font:16px/1.55 "Microsoft YaHei",sans-serif}header,main{max-width:1200px;margin:auto;padding:22px 34px}header{display:flex;align-items:center;gap:22px;border-bottom:1px solid #c2cec1}header b{font-size:25px}header small{color:#496659;margin-left:auto}h1{font-size:clamp(30px,4vw,56px);line-height:1.16;letter-spacing:-2px;margin:12px 0}h2{font-size:21px;margin:0 0 12px}p{margin:5px 0 13px}.row{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:19px 0}.panel{padding:22px;background:#fffefa;border:1px solid #c6d0c5;border-radius:9px}.deep{background:#173f3b;color:#fffefa}label{font-weight:bold}button{font:inherit;font-weight:bold;border-radius:5px;background:#dbe4d6;color:#173f3b;border:1px solid #adbfaf;cursor:pointer;padding:7px 12px;margin:4px 4px 4px 0}.primary{background:#eac782;color:#173f3b;border-color:#eac782}textarea{width:100%;min-height:115px;font:inherit;padding:10px;margin:7px 0;color:#173f3b;background:#fffefa;border:1px solid #bdc6b9;border-radius:4px}small,.meta{font-size:13px}.muted{color:#4f635b}button:disabled{opacity:.5;cursor:default}button:focus-visible,textarea:focus-visible{outline:3px solid #b87822}.trace{padding-left:19px;color:#425d50}.trace li,li{margin:4px 0}.chip{display:inline-block;border-radius:12px;background:#e0e9dd;color:#234a40;padding:2px 9px;margin:3px 4px 3px 0;font-size:13px}pre{white-space:pre-wrap;font:inherit;padding:13px;background:#edf2e9;border-left:3px solid #487562}.tag{font:600 12px/1.4 monospace;letter-spacing:1.7px}details{margin:12px 0}summary{cursor:pointer;font-weight:bold}.status{font-size:14px;margin:5px 0 0}#results[hidden]{display:none}@media(max-width:730px){header,main{padding:14px}.row{grid-template-columns:1fr}.panel{padding:15px}header{gap:8px}header small{max-width:145px}.tag{letter-spacing:.3px}}</style>
+<header><b>问证</b><span class="tag">INQUIRY DESK</span><small>本机处理 · 虚构教学目录</small></header><main><h1>这封询盘，哪一句能答？</h1><p>把买家的原话与目录逐项核对，留下证据、缺口和一封可审阅的英文答复。</p>
+<div class="row"><section class="panel deep"><form id="form"><label for="msg">买家询盘</label><textarea id="msg" required maxlength="3000">Can you quote 500 sets of BX-12? Please confirm delivery to Milan in ten days and provide a food-contact certificate.</textarea><button class="primary" type="submit">分析询盘</button><button type="button" data-case="low">低于起订量</button><button type="button" data-case="multi">多型号</button><button type="button" data-case="unknown">未知型号</button></form><p class="status" id="status" aria-live="polite">请输入型号、采购量和希望确认的事项。</p></section>
+<section class="panel"><h2>产品证据库</h2><div id="catalogRows"></div><details><summary>价格、来源与本地目录导入</summary><p id="tierInfo"></p><label for="localCatalog">导入 JSON 目录（仅当前页面）</label><br><input type="file" id="localCatalog" accept=".json,application/json"><button type="button" id="resetCatalog">恢复示例目录</button><p id="sourceStatus" role="status" class="meta"></p></details><span class="meta muted">库存、证书、运期与折扣需要人工确认。</span></section></div>
+<section id="results" hidden><div class="row"><article class="panel"><h2>可引用的事实</h2><ul id="facts"></ul><h2>交给业务确认</h2><ul id="needs"></ul></article><article class="panel"><h2>英文审阅稿</h2><pre id="draft" lang="en"></pre><button id="save">导出审阅记录</button></article></div><section class="panel"><h2>为什么查这些资料</h2><div id="chips"></div><ol id="trace" class="trace"></ol><small>意图模型使用内置双语短句训练。相似度只用于选择处理步骤，不代表事实置信度。</small></section></section></main>
+<script>
+'use strict';
+const demoCatalog={
+ 'BX-12':{name:'desk organizer kit',moq:300,unit:'sets',levels:[[500,4.50],[300,4.80]],units:['set','sets','套']},
+ 'PK-08':{name:'paper craft kit',moq:100,unit:'units',levels:[[500,2.00],[100,2.30]],units:['unit','units','pc','pcs','piece','pieces','件','个']}
+};
+const intentExamples={
+ price:['quote the unit price','please send me a quotation','what is the price per set','volume pricing bulk discount','how much will each piece cost','能否给我阶梯报价','采购单价多少','价格和折扣','需要报价单'],
+ shipping:['when can this arrive','delivery time and destination','what is the lead time','transport to our warehouse','shipping freight dispatch','can it reach our office in ten days','delivery schedule','courier and delivery options','寄到米兰要几天','多久到货和发货','物流运费交期','运输到港时间'],
+ docs:['provide a food-contact certificate','product certification conformity','safety documentation or test report','proof of compliance and lab test','send the declaration and certificate','是否有食品接触证明','需要合规认证与证书','请提供安全检测报告'],
+ samples:['send a sample','evaluate a trial unit','sample evaluation','prototype before committing','寄一件样品','打样费用和样品','能否先试用'],
+ stock:['any inventory available','is this item in stock','how many remain','reserve stock for me','库存还有多少','有现货吗','保留库存']
+};
+const labelNames={price:'报价',shipping:'运输',docs:'证书',samples:'样品',stock:'库存'};
+let catalog=demoCatalog,version='CAT-01/v1.1',importAttempt=0;
+const stops=new Set('the a an is are in on and can to of me we our please it this you for do i how or what per before need confirm provide send give as at requested request item'.split(' '));
+function tokens(text){
+ const s=text.normalize('NFKC').toLowerCase();const en=(s.match(/[a-z]+/g)||[]).filter(x=>!stops.has(x));const zh=[];
+ for(const block of s.match(/[\u3400-\u9fff]+/g)||[]){for(let i=0;i<block.length;i++){if(i+1<block.length)zh.push(block.slice(i,i+2));}}
+ return [...en,...zh];
+}
+// Fit a TF-IDF nearest-centroid classifier on auditable, local bilingual examples.
+const documents=Object.entries(intentExamples).flatMap(([key,examples])=>examples.map(s=>[key,tokens(s)]));const df={};
+for(const [,words] of documents){for(const w of new Set(words))df[w]=(df[w]||0)+1;}
+function vector(words){const v=Object.create(null);for(const w of words){if(Object.hasOwn(df,w))v[w]=(v[w]||0)+Math.log((1+documents.length)/(1+df[w]))+1;}const n=Math.hypot(...Object.values(v))||1;return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,x/n]));}
+const centers=Object.create(null);
+for(const [k,ws] of documents){const c=centers[k]||=Object.create(null);for(const [w,n] of Object.entries(vector(ws)))c[w]=(c[w]||0)+n;}
+for(const c of Object.values(centers)){const norm=Math.hypot(...Object.values(c));for(const w of Object.keys(c))c[w]/=norm;}
+const examples=documents.map(([k,words])=>[k,vector(words)]);
+function classify(s){const q=Object.entries(vector(tokens(s)));const similarity=v=>q.reduce((n,[w,x])=>n+x*(v[w]||0),0);return Object.entries(centers).map(([k,c])=>{const nearest=Math.max(...examples.filter(([key])=>key===k).map(([,v])=>similarity(v)));return [k,.55*nearest+.45*similarity(c)];}).filter(x=>x[1]>=.13).sort((a,b)=>b[1]-a[1]);}
+const cases={low:'PK-08，请报 50 件的价格，多久到货？',multi:'Please quote 300 sets of BX-12 and 600 units of PK-08.',unknown:'Please send a sample of ZZ-45, 80 units, and confirm your certificate.'};
+function analyze(input){
+ let normalized=input.normalize('NFKC').replace(/[‐‑–—]/g,'-');
+ const skus=[...new Set((normalized.toUpperCase().match(/\b[A-Z]{2,4}-\d{2,5}\b/g)||[]))];
+ const found=[...normalized.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(sets?|units?|pcs?|pieces?|套|件|个)(?![A-Za-z])/gi)];
+ const ambiguous=/(?:\d[\d,.]*\s*(?:[-/~–—]|to|or|至|到|或)\s*\d[\d,.]*|(?:^|\s)[−-]\d[\d,.]*)\s*(?:sets?|units?|pcs?|pieces?|套|件|个)/i.test(normalized);
+ const qty=!ambiguous && found.length===1 && /^(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(found[0][1])?Number(found[0][1].replaceAll(',','')):null;
+ const sku=skus.length===1?skus[0]:null;const prod=catalog[sku];const legalQty=Number.isSafeInteger(qty)&&qty>0;const unit=found.length===1?found[0][2].toLowerCase():'';
+ const intents=classify(input), names=new Set(intents.map(x=>x[0]));const facts=[],needs=[],trace=[],en=[];let price=null;
+ trace.push('意图识别：'+(intents.map(x=>labelNames[x[0]]).join('、')||'未命中训练语料，转人工阅读')+'。');
+ trace.push('目录检索：'+(skus.length?skus.join('、'):'未识别型号')+'，使用 '+version+'。');
+ if(prod){facts.push(sku+' · '+prod.name+'；最小起订 '+prod.moq+' '+prod.unit+' ［'+version+'/'+sku+'/MOQ］');en.push('Our catalog lists the '+prod.name+' ('+sku+') with a minimum order of '+prod.moq+' '+prod.unit+'.');}
+ else if(skus.length>1){needs.push('多型号询盘：请分行给出每个型号、数量和单位，分别核价。');en.push('Please send one line per model with its quantity and unit so that we can quote each item separately.');}
+ else{needs.push('型号未命中：请买家补充正确货号或参考资料。');en.push('Could you confirm the exact catalog model or share a product reference?');}
+ if(legalQty){facts.push('买家原文「'+found[0][0]+'」［询盘原文］');}
+ if(prod&&!legalQty){needs.push('需要唯一且有效的采购数量与单位。');en.push('Could you confirm the quantity and unit?');}
+ if(prod&&legalQty){if(!prod.units.includes(unit)){needs.push('采购单位与目录计价单位不一致，需先核对换算。');en.push('Please confirm the ordering unit; the catalog is priced in '+prod.unit+'.');}
+ else if(qty<prod.moq){needs.push('采购量低于起订量，请审核小单方案。');en.push('The requested quantity is below the listed minimum; we will check whether a smaller order is possible.');}
+ else if(names.has('price')){price=prod.levels.find(([floor])=>qty>=floor)[1];facts.push('目录阶梯单价 USD '+price.toFixed(2)+' ［'+version+'/'+sku+'/PRICE］');en.push('At '+qty+' '+prod.unit+', the indicative catalog price is USD '+price.toFixed(2)+' per unit, excluding freight and taxes, subject to review.');}}
+ const follow={shipping:['运输目的地、方式及预计交期交物流核实。','We will check shipping terms and timing with logistics.'],docs:['证书或检测报告需由合规人员核对版本和适用型号。','We will verify the requested documentation and its product scope.'],samples:['样品费、可用数与寄送条件需业务确认。','We will check sample availability and terms.'],stock:['库存资料缺失，须核对可发货数量。','We will verify current stock before confirming availability.']};
+ for(const [k,r] of Object.entries(follow)){if(names.has(k)){needs.push(r[0]);en.push(r[1]);}}
+ if(!intents.length){needs.push('意图置信信息不足，请业务阅读原文后分派。');}
+ needs.push('业务复核范围、税费及最终条件后再对外答复。');trace.push('起订量与单位校核：'+(price!==null?'满足阶梯条件并引用价格行。':'未出具阶梯价。'));trace.push('生成双语交接与英文审阅稿；外发由业务人员决定。');
+ return {input,skus,qty:legalQty?qty:null,price,intents:intents.map(([k,v])=>({label:labelNames[k],similarity:Number(v.toFixed(3))})),facts,needs,trace,draft:'Hello,\n\n'+en.join(' ')+'\n\nBest regards',catalogVersion:version,model:'local-tfidf-prototype-v2'};
+}
+const $=id=>document.getElementById(id);let result=null;
+function showCatalog(){
+ $('catalogRows').replaceChildren(...Object.entries(catalog).slice(0,4).map(([sku,p])=>{const line=document.createElement('p');line.textContent=sku+'　'+p.name+' · 起订 '+p.moq+' '+p.unit;return line;}));
+ $('tierInfo').textContent=version+' · 共 '+Object.keys(catalog).length+' 个型号。'+Object.entries(catalog).slice(0,4).map(([sku,p])=>sku+'：'+p.levels.map(([n,a])=>n+'+ USD '+a.toFixed(2)).join(' / ')).join('；');
+ document.querySelector('header small').textContent=catalog===demoCatalog?'本机处理 · 虚构教学目录':'本机处理 · 导入目录';
+}
+function parseCatalog(data){
+ if(!data||!/^[-A-Za-z0-9_./]{1,48}$/.test(data.version)||typeof data.version!=='string'||!Array.isArray(data.products)||!data.products.length||data.products.length>1000)throw Error('版本或条数不符合模板');
+ const tmp=Object.create(null),units={sets:['sets','set','套'],units:['unit','units','pc','pcs','piece','pieces','件','个']};
+ for(const p of data.products){
+  if(!p||!/^[A-Z]{2,4}-\d{2,5}$/.test(p.sku)||tmp[p.sku]||typeof p.name!=='string'||!p.name.trim()||p.name.length>100||!Object.hasOwn(units,p.unit)||!Number.isSafeInteger(p.moq)||p.moq<1||!Array.isArray(p.levels)||!p.levels.length||p.levels.length>40)throw Error('产品信息、型号或数量字段有误');
+  if(!p.levels.every(row=>Array.isArray(row)&&row.length===2&&Number.isSafeInteger(row[0])&&row[0]>=p.moq&&Number.isFinite(row[1])&&row[1]>=.01&&row[1]<10000000&&Math.abs(row[1]*100-Math.round(row[1]*100))<.000001))throw Error('价格梯级有误');
+  const levels=p.levels.slice().sort((a,b)=>b[0]-a[0]);if(levels.at(-1)[0]!==p.moq||new Set(levels.map(r=>r[0])).size!==levels.length)throw Error('最低梯级必须等于起订量，梯级不得重复');
+  tmp[p.sku]={name:p.name.trim(),unit:p.unit,moq:p.moq,units:units[p.unit],levels};
+ }return tmp;
+}
+showCatalog();
+$('localCatalog').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;const attempt=++importAttempt;try{if(f.size>1048576)throw Error('文件超过 1 MB');const data=JSON.parse((await f.text()).replace(/^\uFEFF/,''));if(attempt!==importAttempt)return;const parsed=parseCatalog(data);catalog=parsed;version=data.version;invalidate();showCatalog();$('sourceStatus').textContent='目录已导入 '+version;}catch(ex){if(attempt===importAttempt)$('sourceStatus').textContent='导入失败，沿用当前目录。'+ex.message;}if(attempt===importAttempt)e.target.value='';});
+$('resetCatalog').addEventListener('click',()=>{importAttempt++;catalog=demoCatalog;version='CAT-01/v1.1';invalidate();showCatalog();$('sourceStatus').textContent='已恢复示例目录';});
+function list(id,rows){$(id).replaceChildren(...rows.map(t=>{const e=document.createElement('li');e.textContent=t;return e;}));}
+function invalidate(){result=null;$('results').hidden=true;$('status').textContent='内容已变更，重新分析后可导出。';}
+$('msg').addEventListener('input',invalidate);
+document.querySelectorAll('[data-case]').forEach(b=>b.addEventListener('click',()=>{$('msg').value=cases[b.dataset.case];invalidate();$('msg').focus();}));
+$('form').addEventListener('submit',e=>{e.preventDefault();const inp=$('msg').value.trim();if(!inp){invalidate();return;}result=analyze(inp);list('facts',result.facts.length?result.facts:['尚无可引用的目录事实。']);list('needs',result.needs);list('trace',result.trace);$('chips').replaceChildren(...result.intents.map(i=>{const x=document.createElement('span');x.className='chip';x.textContent=i.label+' '+i.similarity.toFixed(2);return x;}));$('draft').textContent=result.draft;$('results').hidden=false;$('status').textContent='已生成审阅稿 · 未对外发送';});
+$('save').addEventListener('click',()=>{if(!result)return;const url=URL.createObjectURL(new Blob([JSON.stringify(result,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='问证-询盘审阅.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);});
+</script></html>
